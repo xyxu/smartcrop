@@ -39,10 +39,13 @@ import (
 	"log"
 	"math"
 	"time"
+	// "os"
+	// "fmt"
 
 	"github.com/muesli/smartcrop/options"
-
 	"golang.org/x/image/draw"
+
+	"github.com/esimov/pigo/core"
 )
 
 var (
@@ -111,6 +114,7 @@ type smartcropAnalyzer struct {
 func NewAnalyzer(resizer options.Resizer) Analyzer {
 	logger := Logger{
 		DebugMode: false,
+		// Log: log.New(os.Stdout, "", 5),
 	}
 
 	return NewAnalyzerWithLogger(resizer, logger)
@@ -262,6 +266,11 @@ func analyse(logger Logger, img *image.RGBA, cropWidth, cropHeight, realMinScale
 	saturationDetect(img, o)
 	logger.Log.Println("Time elapsed sat:", time.Since(now))
 	debugOutput(logger.DebugMode, o, "saturation")
+
+	now = time.Now()
+	faceDetect(img, o)
+	logger.Log.Println("Time elapsed sat:", time.Since(now))
+	debugOutput(logger.DebugMode, o, "face")
 
 	now = time.Now()
 	var topCrop Crop
@@ -420,6 +429,64 @@ func saturationDetect(i *image.RGBA, o *image.RGBA) {
 				o.SetRGBA(x, y, nc)
 			} else {
 				nc := color.RGBA{c.R, c.G, 0, 255}
+				o.SetRGBA(x, y, nc)
+			}
+		}
+	}
+}
+
+func faceDetect(input *image.RGBA, o *image.RGBA) {
+	src := pigo.ImgToNRGBA(input)
+	pixels := pigo.RgbToGrayscale(src)
+	cols, rows := src.Bounds().Max.X, src.Bounds().Max.Y
+
+	cParams := pigo.CascadeParams{
+		MinSize:     20,
+		MaxSize:     1000,
+		ShiftFactor: 0.1,
+		ScaleFactor: 1.2,
+
+		ImageParams: pigo.ImageParams{
+			Pixels: pixels,
+			Rows:   rows,
+			Cols:   cols,
+			Dim:    cols,
+		},
+	}
+
+	cascadeFile, err := dataFace()
+	if err != nil {
+		log.Fatalf("Error reading the cascade file: %v", err)
+	}
+
+	pigo := pigo.NewPigo()
+
+	classifier, err := pigo.Unpack(cascadeFile)
+	if err != nil {
+		log.Fatalf("Error reading the cascade file: %s", err)
+	}
+
+	angle := 0.0
+	dets := classifier.RunCascade(cParams, angle)
+
+	faces := classifier.ClusterDetections(dets, 0.2)
+	// fmt.Printf("dets: %+v, faces: %+v\n", dets, faces)
+
+	minRadius := 0
+	for i := 0; i < len(faces); i++ {
+		if minRadius <= 0 || faces[i].Scale < minRadius {
+			minRadius = faces[i].Scale
+		}
+	}
+	for i := 0; i < len(faces); i++ {
+		minX := int(faces[i].Col) - int(minRadius/2)
+		maxX := int(faces[i].Col) + int(minRadius/2)
+		minY := int(faces[i].Row) - int(minRadius/2)
+		maxY := int(faces[i].Row) + int(minRadius/2)
+
+		for y := minY; y < maxY; y++ {
+			for x := minX; x < maxX; x++ {
+				nc := color.RGBA{255, 255, 255, 255}
 				o.SetRGBA(x, y, nc)
 			}
 		}
